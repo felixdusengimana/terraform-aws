@@ -69,8 +69,9 @@ jobs:
     - name: Create terraform.tfvars
       run: |
         cat > terraform.tfvars <<EOF
-        repository_name = "${{ vars.REPOSITORY_NAME }}"
+        repository_name = "felixdusengimana-demo-repo"
         EOF
+        cat terraform.tfvars
 
     - name: Terraform Plan
       run: terraform plan -input=false -out=tfplan
@@ -98,7 +99,7 @@ jobs:
       if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
       run: |
         terraform state rm aws_ecr_repository.demo_repo 2>/dev/null || true
-        terraform import aws_ecr_repository.demo_repo ${{ vars.REPOSITORY_NAME }} 2>/dev/null || true
+        terraform import aws_ecr_repository.demo_repo felixdusengimana-demo-repo 2>/dev/null || echo "Repository not yet in state (first run)"
       continue-on-error: true
 
     - name: Terraform Apply
