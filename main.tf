@@ -15,7 +15,7 @@ provider "aws" {
 
 # Create an ECR Repository
 resource "aws_ecr_repository" "demo_repo" {
-  name                 = "felixdusengimana-demo-repo" # Change this to be unique
+  name                 = var.repository_name
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {

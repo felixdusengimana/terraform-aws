@@ -66,6 +66,12 @@ jobs:
     - name: Terraform Validate
       run: terraform validate
 
+    - name: Create terraform.tfvars
+      run: |
+        cat > terraform.tfvars <<EOF
+        repository_name = "${{ vars.REPOSITORY_NAME }}"
+        EOF
+
     - name: Terraform Plan
       run: terraform plan -input=false -out=tfplan
 
@@ -87,6 +93,13 @@ jobs:
             repo: context.repo.repo,
             body: `## 📋 Terraform Plan\n\`\`\`\n${truncatedPlan}\n\`\`\``
           });
+
+    - name: Import Existing ECR Repository (if exists)
+      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
+      run: |
+        terraform state rm aws_ecr_repository.demo_repo 2>/dev/null || true
+        terraform import aws_ecr_repository.demo_repo ${{ vars.REPOSITORY_NAME }} 2>/dev/null || true
+      continue-on-error: true
 
     - name: Terraform Apply
       if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
