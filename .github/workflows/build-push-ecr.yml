@@ -125,8 +125,10 @@ jobs:
       if: (github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
       run: |
         REPO_URL=$(terraform output -raw repository_url)
-        echo "repository_url=${REPO_URL}" >> $GITHUB_OUTPUT
-        echo "✅ ECR Repository URL obtained: ${REPO_URL}"
+        echo "repository_url<<EOF" >> $GITHUB_OUTPUT
+        echo "$REPO_URL" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        echo "✅ ECR Repository URL obtained"
 
   build-and-push:
     name: 'Build and Push Docker'
