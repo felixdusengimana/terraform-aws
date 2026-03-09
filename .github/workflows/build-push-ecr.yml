@@ -15,7 +15,6 @@ jobs:
   terraform:
     name: 'Terraform'
     runs-on: ubuntu-latest
-    environment: production
 
     defaults:
       run:
@@ -90,7 +89,6 @@ jobs:
     needs: terraform
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: production
 
     defaults:
       run:
