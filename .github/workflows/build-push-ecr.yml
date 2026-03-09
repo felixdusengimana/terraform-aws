@@ -1,27 +1,35 @@
-name: Terraform Plan and Apply + Build and Push to ECR
+name: 'Terraform and Docker CI/CD'
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ main ]
+    branches: [ "main" ]
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   terraform:
+    name: 'Terraform'
     runs-on: ubuntu-latest
-    name: Terraform Plan/Apply
+    environment: production
+
+    defaults:
+      run:
+        shell: bash
+
     outputs:
       repository_url: ${{ steps.terraform_output.outputs.repository_url }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v4
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: latest
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -33,34 +41,36 @@ jobs:
     - name: Terraform Init
       run: terraform init
 
+    - name: Terraform Format
+      run: terraform fmt -check
+
     - name: Terraform Validate
       run: terraform validate
 
     - name: Terraform Plan
-      run: terraform plan -no-color -out=tfplan
+      run: terraform plan -input=false -out=tfplan
 
-    - name: Comment PR with Plan
+    - name: Comment PR with Terraform Plan
       if: github.event_name == 'pull_request'
       uses: actions/github-script@v6
       with:
         script: |
           const fs = require('fs');
-          const plan = fs.readFileSync('tfplan', 'utf8');
+          const plan = fs.readFileSync('tfplan.txt', 'utf8') || 'Plan file not available';
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: `## Terraform Plan\n\`\`\`\n${plan}\n\`\`\``
+            body: `## 📋 Terraform Plan\n\`\`\`\n${plan}\n\`\`\``
           });
 
     - name: Terraform Apply
       if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
-      run: terraform apply -auto-approve tfplan
+      run: terraform apply -input=false tfplan
 
     - name: Mask Terraform Secrets
       if: (github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
       run: |
-        # Mask any sensitive terraform outputs
         terraform output -json | jq -r 'to_entries[] | select(.value.sensitive == true) | .value.value' | while read -r line; do
           if [ ! -z "$line" ]; then
             echo "::add-mask::$line"
@@ -73,17 +83,22 @@ jobs:
       run: |
         REPO_URL=$(terraform output -raw repository_url)
         echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
-        echo "✅ Terraform outputs retrieved securely"
+        echo "✅ ECR Repository URL obtained"
 
   build-and-push:
+    name: 'Build and Push Docker'
     needs: terraform
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    name: Build and Push Docker Image
+    environment: production
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v4
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -97,7 +112,6 @@ jobs:
         ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
       run: |
         aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $(echo $ECR_REPOSITORY_URL | cut -d/ -f1)
-        echo "✅ Successfully logged into ECR"
 
     - name: Build Docker image
       id: build-image
@@ -113,7 +127,11 @@ jobs:
         IMAGE: ${{ steps.build-image.outputs.image }}
       run: |
         docker push $IMAGE
-        echo "✅ Image successfully pushed to ECR"
+        echo "✅ Docker image pushed to ECR"
 
     - name: Print Image URI
-      run: echo "Image URI: ${{ steps.build-image.outputs.image }}"
+      env:
+        IMAGE_URI: ${{ steps.build-image.outputs.image }}
+      run: |
+        echo "## Docker Image Successfully Pushed" >> $GITHUB_STEP_SUMMARY
+        echo "Image URI: \`$IMAGE_URI\`" >> $GITHUB_STEP_SUMMARY
