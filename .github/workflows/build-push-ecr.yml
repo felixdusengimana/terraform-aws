@@ -1,0 +1,118 @@
+name: Terraform Plan and Apply + Build and Push to ECR
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    name: Terraform Plan/Apply
+    outputs:
+      repository_url: ${{ steps.terraform_output.outputs.repository_url }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: latest
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Validate
+      run: terraform validate
+
+    - name: Terraform Plan
+      run: terraform plan -no-color -out=tfplan
+
+    - name: Comment PR with Plan
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const plan = fs.readFileSync('tfplan', 'utf8');
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `## Terraform Plan\n\`\`\`\n${plan}\n\`\`\``
+          });
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: terraform apply -auto-approve tfplan
+
+    - name: Mask Terraform Secrets
+      if: github.ref == 'refs/heads/main'
+      run: |
+        # Mask any sensitive terraform outputs
+        terraform output -json | jq -r 'to_entries[] | select(.value.sensitive == true) | .value.value' | while read -r line; do
+          if [ ! -z "$line" ]; then
+            echo "::add-mask::$line"
+          fi
+        done
+
+    - name: Get Terraform Output
+      id: terraform_output
+      if: github.ref == 'refs/heads/main'
+      run: |
+        REPO_URL=$(terraform output -raw repository_url)
+        echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
+        echo "✅ Terraform outputs retrieved securely"
+
+  build-and-push:
+    needs: terraform
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    name: Build and Push Docker Image
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Login to Amazon ECR
+      env:
+        ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
+      run: |
+        aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $(echo $ECR_REPOSITORY_URL | cut -d/ -f1)
+        echo "✅ Successfully logged into ECR"
+
+    - name: Build Docker image
+      id: build-image
+      env:
+        ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
+        IMAGE_TAG: latest
+      run: |
+        docker build -t $ECR_REPOSITORY_URL:$IMAGE_TAG .
+        echo "image=$ECR_REPOSITORY_URL:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+    - name: Push Docker image to ECR
+      env:
+        IMAGE: ${{ steps.build-image.outputs.image }}
+      run: |
+        docker push $IMAGE
+        echo "✅ Image successfully pushed to ECR"
+
+    - name: Print Image URI
+      run: echo "Image URI: ${{ steps.build-image.outputs.image }}"
