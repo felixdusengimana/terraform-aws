@@ -67,6 +67,16 @@ jobs:
             body: `## 📋 Terraform Plan\n\`\`\`\n${truncatedPlan}\n\`\`\``
           });
 
+    - name: Import Existing ECR Repository (if exists)
+      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
+      run: |
+        terraform import aws_ecr_repository.demo_repo felixdusengimana-demo-repo 2>/dev/null || echo "Repository not yet in state (first run)"
+      continue-on-error: true
+
+    - name: Terraform Plan (After Import)
+      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
+      run: terraform plan -input=false -out=tfplan
+
     - name: Terraform Apply
       if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
       run: terraform apply -input=false tfplan
