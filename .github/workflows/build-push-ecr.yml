@@ -21,6 +21,10 @@ jobs:
       run:
         shell: bash
 
+    outputs:
+      repository_url: ${{ steps.tf_output.outputs.repository_url }}
+      docker_login_command: ${{ steps.tf_output.outputs.docker_login_command }}
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -76,6 +80,17 @@ jobs:
       if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
       run: terraform apply -input=false tfplan
 
+    - name: Export Terraform Outputs
+      id: tf_output
+      run: |
+        REPO_URL=$(terraform output -raw repository_url 2>&1 | grep -v "^╷" | grep -v "^│" | grep -v "^└" | grep "\.amazonaws\.com" | tail -1)
+        LOGIN_CMD=$(terraform output -raw docker_login_command 2>&1 | grep "aws ecr" | tail -1)
+        
+        echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
+        echo "docker_login_command=$LOGIN_CMD" >> $GITHUB_OUTPUT
+        
+        echo "✅ Terraform outputs exported"
+
   build-and-push:
     name: 'Build and Push Docker'
     needs: terraform
@@ -87,12 +102,13 @@ jobs:
       run:
         shell: bash
 
+    env:
+      ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
+      DOCKER_LOGIN_CMD: ${{ needs.terraform.outputs.docker_login_command }}
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -101,41 +117,17 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
 
-    - name: Terraform Init
-      run: terraform init
-
-    - name: Get Terraform Outputs
-      run: |
-        echo "🔍 Getting terraform outputs..."
-        
-        # Get raw outputs, filtering out terraform UI elements
-        ECR_REPOSITORY_URL=$(terraform output -raw repository_url 2>&1 | grep -v "^╷" | grep -v "^│" | grep -v "^└" | grep "\.amazonaws\.com" | tail -1)
-        DOCKER_LOGIN_CMD=$(terraform output -raw docker_login_command 2>&1 | grep "aws ecr" | tail -1)
-        
-        # Validate before writing
-        if [ -z "$ECR_REPOSITORY_URL" ] || [ -z "$DOCKER_LOGIN_CMD" ]; then
-          echo "❌ ERROR: Failed to get terraform outputs"
-          echo "ECR_REPOSITORY_URL: [$ECR_REPOSITORY_URL]"
-          echo "DOCKER_LOGIN_CMD: [$DOCKER_LOGIN_CMD]"
-          exit 1
-        fi
-        
-        echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL" >> $GITHUB_ENV
-        echo "DOCKER_LOGIN_CMD=$DOCKER_LOGIN_CMD" >> $GITHUB_ENV
-        
-        echo "✅ Terraform outputs loaded successfully"
-
     - name: Validate Outputs
       run: |
-        echo "🔍 Checking outputs..."
+        echo "🔍 Checking outputs from terraform job..."
         
         if [ -z "$ECR_REPOSITORY_URL" ]; then
-          echo "❌ ERROR: Failed to get repository URL"
+          echo "❌ ERROR: Failed to get repository URL from terraform job"
           exit 1
         fi
         
         if [ -z "$DOCKER_LOGIN_CMD" ]; then
-          echo "❌ ERROR: Failed to get docker login command"
+          echo "❌ ERROR: Failed to get docker login command from terraform job"
           exit 1
         fi
         
