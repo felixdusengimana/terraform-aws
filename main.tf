@@ -56,7 +56,7 @@ output "repository_url" {
 
 # Output the Docker login command
 output "docker_login_command" {
-  sensitive = true
+  sensitive   = true
   description = "Command to authenticate Docker with ECR"
   value       = "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${aws_ecr_repository.demo_repo.repository_url}"
 }
