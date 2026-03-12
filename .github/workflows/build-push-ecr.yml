@@ -124,37 +124,25 @@ jobs:
     - name: Get Terraform Output
       id: terraform_output
       run: |
-        echo "🔍 Listing all terraform outputs..."
-        terraform output -json || true
+        echo "🔍 Retrieving Terraform outputs..."
         
-        echo ""
-        echo "🔍 Checking specific outputs..."
+        # Get outputs and strip debug messages
+        REPO_URL=$(terraform output -raw repository_url 2>&1 | grep -v "::debug::" | tail -1)
+        DOCKER_LOGIN=$(terraform output -raw docker_login_command 2>&1 | grep -v "::debug::" | tail -1)
         
-        # Try to get repository_url
-        REPO_URL=$(terraform output -raw repository_url 2>&1 || echo "OUTPUT_FAILED")
-        echo "repository_url result: $REPO_URL"
+        echo "Got repository_url: $REPO_URL"
+        echo "Got docker_login_command: $DOCKER_LOGIN"
         
-        DOCKER_LOGIN=$(terraform output -raw docker_login_command 2>&1 || echo "OUTPUT_FAILED")
-        echo "docker_login_command result: $DOCKER_LOGIN"
-        
-        # Check if terraform state exists
-        echo ""
-        echo "🔍 Checking terraform state..."
-        terraform show -json 2>&1 | head -50 || echo "Failed to read state"
-        
-        # If we got outputs, write them
-        if [ "$REPO_URL" != "OUTPUT_FAILED" ] && [ ! -z "$REPO_URL" ]; then
-          echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
-        else
-          echo "❌ Failed to retrieve repository_url"
+        if [ -z "$REPO_URL" ]; then
+          echo "❌ Failed to get repository URL"
           exit 1
         fi
         
-        if [ "$DOCKER_LOGIN" != "OUTPUT_FAILED" ] && [ ! -z "$DOCKER_LOGIN" ]; then
-          echo "docker_login_command=$DOCKER_LOGIN" >> $GITHUB_OUTPUT
-        fi
+        # Write to GITHUB_OUTPUT
+        echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
+        echo "docker_login_command=$DOCKER_LOGIN" >> $GITHUB_OUTPUT
         
-        echo "✅ Outputs retrieved and written to GITHUB_OUTPUT"
+        echo "✅ Outputs written to GITHUB_OUTPUT"
 
   build-and-push:
     name: 'Build and Push Docker'
