@@ -79,8 +79,13 @@ jobs:
     - name: Export Terraform Outputs
       id: tf_outputs
       run: |
-        REPO_URL=$(terraform output -raw repository_url 2>&1 | grep -v "^╷" | grep -v "^│" | grep -v "^└" | grep "\.amazonaws\.com" | tail -1)
-        LOGIN_CMD=$(terraform output -raw docker_login_command 2>&1 | grep "aws ecr" | tail -1)
+        # Get raw outputs and clean up terraform UI and debug output
+        REPO_URL=$(terraform output -raw repository_url 2>&1 | sed 's/::debug::.*//' | grep -v "^╷" | grep -v "^│" | grep -v "^└" | grep "\.amazonaws\.com" | tail -1)
+        LOGIN_CMD=$(terraform output -raw docker_login_command 2>&1 | sed 's/::debug::.*//' | grep "aws ecr" | tail -1)
+        
+        # Clean up any remaining whitespace
+        REPO_URL=$(echo "$REPO_URL" | xargs)
+        LOGIN_CMD=$(echo "$LOGIN_CMD" | xargs)
         
         if [ -z "$REPO_URL" ] || [ -z "$LOGIN_CMD" ]; then
           echo "❌ ERROR: Failed to get terraform outputs"
