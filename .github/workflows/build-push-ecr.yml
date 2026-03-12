@@ -124,31 +124,37 @@ jobs:
     - name: Get Terraform Output
       id: terraform_output
       run: |
-        set -e
-        echo "🔍 Retrieving Terraform outputs..."
+        echo "🔍 Listing all terraform outputs..."
+        terraform output -json || true
         
-        # Get outputs with better error handling
-        REPO_URL=$(terraform output -raw repository_url)
-        DOCKER_LOGIN=$(terraform output -raw docker_login_command)
+        echo ""
+        echo "🔍 Checking specific outputs..."
         
-        # Trim whitespace
-        REPO_URL=$(echo "$REPO_URL" | xargs)
-        DOCKER_LOGIN=$(echo "$DOCKER_LOGIN" | xargs)
+        # Try to get repository_url
+        REPO_URL=$(terraform output -raw repository_url 2>&1 || echo "OUTPUT_FAILED")
+        echo "repository_url result: $REPO_URL"
         
-        if [ -z "$REPO_URL" ]; then
-          echo "❌ Failed to get repository URL"
+        DOCKER_LOGIN=$(terraform output -raw docker_login_command 2>&1 || echo "OUTPUT_FAILED")
+        echo "docker_login_command result: $DOCKER_LOGIN"
+        
+        # Check if terraform state exists
+        echo ""
+        echo "🔍 Checking terraform state..."
+        terraform show -json 2>&1 | head -50 || echo "Failed to read state"
+        
+        # If we got outputs, write them
+        if [ "$REPO_URL" != "OUTPUT_FAILED" ] && [ ! -z "$REPO_URL" ]; then
+          echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Failed to retrieve repository_url"
           exit 1
         fi
         
-        # Write to GITHUB_OUTPUT properly
-        {
-          echo "repository_url=$REPO_URL"
-          echo "docker_login_command=$DOCKER_LOGIN"
-        } >> $GITHUB_OUTPUT
+        if [ "$DOCKER_LOGIN" != "OUTPUT_FAILED" ] && [ ! -z "$DOCKER_LOGIN" ]; then
+          echo "docker_login_command=$DOCKER_LOGIN" >> $GITHUB_OUTPUT
+        fi
         
-        echo "✅ Outputs obtained:"
-        echo "  Repository URL: $REPO_URL"
-        echo "  Docker Login Command: Ready"
+        echo "✅ Outputs retrieved and written to GITHUB_OUTPUT"
 
   build-and-push:
     name: 'Build and Push Docker'
