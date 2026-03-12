@@ -91,6 +91,9 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -98,53 +101,53 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
-
     - name: Terraform Init
       run: terraform init
 
-    - name: Validate Terraform Outputs
+    - name: Get Terraform Outputs
       run: |
-        echo "🔍 Checking terraform outputs..."
-        terraform output -json || exit 1
+        ECR_REPOSITORY_URL=$(terraform output -raw repository_url)
+        DOCKER_LOGIN_CMD=$(terraform output -raw docker_login_command)
         
-        REPO_URL=$(terraform output -raw repository_url)
-        LOGIN_CMD=$(terraform output -raw docker_login_command)
+        echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL" >> $GITHUB_ENV
+        echo "DOCKER_LOGIN_CMD=$DOCKER_LOGIN_CMD" >> $GITHUB_ENV
         
-        if [ -z "$REPO_URL" ]; then
+        echo "✅ Terraform outputs loaded"
+
+    - name: Validate Outputs
+      run: |
+        echo "🔍 Checking outputs..."
+        
+        if [ -z "$ECR_REPOSITORY_URL" ]; then
           echo "❌ ERROR: Failed to get repository URL"
           exit 1
         fi
         
-        echo "✅ Terraform outputs available"
-        echo "Repository URL: $REPO_URL"
+        if [ -z "$DOCKER_LOGIN_CMD" ]; then
+          echo "❌ ERROR: Failed to get docker login command"
+          exit 1
+        fi
+        
+        echo "✅ Outputs validated"
+        echo "Repository URL: $ECR_REPOSITORY_URL"
 
     - name: Login to Amazon ECR
       run: |
-        DOCKER_LOGIN_CMD=$(terraform output -raw docker_login_command)
         eval "$DOCKER_LOGIN_CMD"
         echo "✅ Successfully logged in to ECR"
 
     - name: Build Docker Image
       run: |
-        ECR_REPOSITORY_URL=$(terraform output -raw repository_url)
         IMAGE_TAG="latest"
         
         echo "🐳 Building Docker image..."
         echo "Repository URL: $ECR_REPOSITORY_URL"
         echo "Image Tag: $IMAGE_TAG"
         
-        if [ -z "$ECR_REPOSITORY_URL" ]; then
-          echo "❌ ERROR: ECR_REPOSITORY_URL is empty"
-          exit 1
-        fi
-        
         docker build -t $ECR_REPOSITORY_URL:$IMAGE_TAG .
 
     - name: Push Docker Image to ECR
       run: |
-        ECR_REPOSITORY_URL=$(terraform output -raw repository_url)
         IMAGE_TAG="latest"
         
         echo "📤 Pushing to ECR..."
