@@ -1,4 +1,4 @@
-- hosts: all
+- hosts: local
   become: yes
   tasks:
     - name: Install nginx
@@ -16,7 +16,7 @@
         content: |
           <html>
           <body>
-          <h1>Hello World</h1>
+          <h1>Hello World, from Ansible!</h1>
           </body>
           </html>
         owner: www-data
