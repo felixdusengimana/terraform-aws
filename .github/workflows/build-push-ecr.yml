@@ -49,6 +49,11 @@ jobs:
         repository_name = "felixdusengimana-demo-repo"
         EOF
 
+    - name: Import Existing ECR Repository (if exists)
+      run: |
+        terraform import aws_ecr_repository.demo_repo felixdusengimana-demo-repo 2>/dev/null || echo "Repository not yet in state (first run)"
+      continue-on-error: true
+
     - name: Terraform Plan
       run: terraform plan -input=false -out=tfplan
 
@@ -66,16 +71,6 @@ jobs:
             repo: context.repo.repo,
             body: `## 📋 Terraform Plan\n\`\`\`\n${truncatedPlan}\n\`\`\``
           });
-
-    - name: Import Existing ECR Repository (if exists)
-      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
-      run: |
-        terraform import aws_ecr_repository.demo_repo felixdusengimana-demo-repo 2>/dev/null || echo "Repository not yet in state (first run)"
-      continue-on-error: true
-
-    - name: Terraform Plan (After Import)
-      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
-      run: terraform plan -input=false -out=tfplan
 
     - name: Terraform Apply
       if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
@@ -109,14 +104,30 @@ jobs:
     - name: Terraform Init
       run: terraform init
 
-    - name: Login to Amazon ECR and Build
+    - name: Validate Terraform Outputs
       run: |
-        # Get ECR credentials and login
+        echo "🔍 Checking terraform outputs..."
+        terraform output -json || exit 1
+        
+        REPO_URL=$(terraform output -raw repository_url)
+        LOGIN_CMD=$(terraform output -raw docker_login_command)
+        
+        if [ -z "$REPO_URL" ]; then
+          echo "❌ ERROR: Failed to get repository URL"
+          exit 1
+        fi
+        
+        echo "✅ Terraform outputs available"
+        echo "Repository URL: $REPO_URL"
+
+    - name: Login to Amazon ECR
+      run: |
         DOCKER_LOGIN_CMD=$(terraform output -raw docker_login_command)
         eval "$DOCKER_LOGIN_CMD"
         echo "✅ Successfully logged in to ECR"
-        
-        # Build and push docker image
+
+    - name: Build Docker Image
+      run: |
         ECR_REPOSITORY_URL=$(terraform output -raw repository_url)
         IMAGE_TAG="latest"
         
@@ -124,7 +135,17 @@ jobs:
         echo "Repository URL: $ECR_REPOSITORY_URL"
         echo "Image Tag: $IMAGE_TAG"
         
+        if [ -z "$ECR_REPOSITORY_URL" ]; then
+          echo "❌ ERROR: ECR_REPOSITORY_URL is empty"
+          exit 1
+        fi
+        
         docker build -t $ECR_REPOSITORY_URL:$IMAGE_TAG .
+
+    - name: Push Docker Image to ECR
+      run: |
+        ECR_REPOSITORY_URL=$(terraform output -raw repository_url)
+        IMAGE_TAG="latest"
         
         echo "📤 Pushing to ECR..."
         docker push $ECR_REPOSITORY_URL:$IMAGE_TAG
