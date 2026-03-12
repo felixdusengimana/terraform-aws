@@ -108,16 +108,15 @@ jobs:
       run: |
         echo "🔍 Getting terraform outputs..."
         
-        # Get outputs as JSON and parse with jq
-        OUTPUTS=$(terraform output -json 2>/dev/null)
-        
-        ECR_REPOSITORY_URL=$(echo "$OUTPUTS" | jq -r '.repository_url.value // empty')
-        DOCKER_LOGIN_CMD=$(echo "$OUTPUTS" | jq -r '.docker_login_command.value // empty')
+        # Get raw outputs, filtering out terraform UI elements
+        ECR_REPOSITORY_URL=$(terraform output -raw repository_url 2>&1 | grep -v "^╷" | grep -v "^│" | grep -v "^└" | grep "\.amazonaws\.com" | tail -1)
+        DOCKER_LOGIN_CMD=$(terraform output -raw docker_login_command 2>&1 | grep "aws ecr" | tail -1)
         
         # Validate before writing
         if [ -z "$ECR_REPOSITORY_URL" ] || [ -z "$DOCKER_LOGIN_CMD" ]; then
           echo "❌ ERROR: Failed to get terraform outputs"
-          echo "Outputs: $OUTPUTS"
+          echo "ECR_REPOSITORY_URL: [$ECR_REPOSITORY_URL]"
+          echo "DOCKER_LOGIN_CMD: [$DOCKER_LOGIN_CMD]"
           exit 1
         fi
         
