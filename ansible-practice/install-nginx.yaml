@@ -1,0 +1,33 @@
+- hosts: all
+  become: yes
+  tasks:
+    - name: Install nginx
+      apt:
+        name: nginx
+        state: present
+    - name: Start nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+    - name: Create index.html
+      copy:
+        dest: /var/www/html/index.html
+        content: |
+          <html>
+          <body>
+          <h1>Hello World</h1>
+          </body>
+          </html>
+        owner: www-data
+        group: www-data
+        mode: '0644'
+    - name: Open port 80 in UFW
+      ufw:
+        rule: allow
+        port: 80
+        proto: tcp
+    - name: Check nginx status
+      service:
+        name: nginx        
+        state: started
