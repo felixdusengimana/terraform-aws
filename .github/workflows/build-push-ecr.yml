@@ -23,6 +23,7 @@ jobs:
 
     outputs:
       repository_url: ${{ steps.terraform_output.outputs.repository_url }}
+      docker_login_command: ${{ steps.terraform_output.outputs.docker_login_command }}
 
     steps:
     - name: Checkout
@@ -122,19 +123,16 @@ jobs:
 
     - name: Get Terraform Output
       id: terraform_output
-      if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-      continue-on-error: true
       run: |
-        REPO_URL=$(terraform output -raw repository_url 2>&1)
-        if [ $? -eq 0 ]; then
-          echo "repository_url<<EOF" >> $GITHUB_OUTPUT
-          echo "$REPO_URL" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          echo "✅ ECR Repository URL obtained: $REPO_URL"
-        else
-          echo "❌ Failed to get repository_url: $REPO_URL"
-          exit 1
-        fi
+        REPO_URL=$(terraform output -raw repository_url)
+        DOCKER_LOGIN=$(terraform output -raw docker_login_command)
+        
+        echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
+        echo "docker_login_command=$DOCKER_LOGIN" >> $GITHUB_OUTPUT
+        
+        echo "✅ Outputs obtained:"
+        echo "  Repository URL: $REPO_URL"
+        echo "  Docker Login Command: Ready"
 
   build-and-push:
     name: 'Build and Push Docker'
@@ -158,20 +156,12 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
 
-    - name: Debug ECR Repository URL
-      env:
-        ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
-      run: |
-        echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL"
-        echo "Extracted Registry: $(echo $ECR_REPOSITORY_URL | cut -d/ -f1)"
-
     - name: Login to Amazon ECR
       env:
-        ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
+        DOCKER_LOGIN_CMD: ${{ needs.terraform.outputs.docker_login_command }}
       run: |
-        REGISTRY=$(echo $ECR_REPOSITORY_URL | cut -d/ -f1)
-        echo "Logging in to: $REGISTRY"
-        aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REGISTRY
+        eval "$DOCKER_LOGIN_CMD"
+        echo "✅ Successfully logged in to ECR"
 
     - name: Build Docker image
       id: build-image
