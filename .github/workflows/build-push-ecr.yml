@@ -126,12 +126,16 @@ jobs:
       run: |
         echo "🔍 Retrieving Terraform outputs..."
         
-        # Get outputs and strip debug messages
-        REPO_URL=$(terraform output -raw repository_url 2>&1 | grep -v "::debug::" | tail -1)
-        DOCKER_LOGIN=$(terraform output -raw docker_login_command 2>&1 | grep -v "::debug::" | tail -1)
+        # Get outputs and strip debug messages (everything after ::debug::)
+        REPO_URL=$(terraform output -raw repository_url 2>&1 | sed 's/::debug::.*//')
+        DOCKER_LOGIN=$(terraform output -raw docker_login_command 2>&1 | sed 's/::debug::.*//')
         
-        echo "Got repository_url: $REPO_URL"
-        echo "Got docker_login_command: $DOCKER_LOGIN"
+        # Trim any whitespace
+        REPO_URL=$(echo "$REPO_URL" | xargs)
+        DOCKER_LOGIN=$(echo "$DOCKER_LOGIN" | xargs)
+        
+        echo "✓ Repository URL: $REPO_URL"
+        echo "✓ Docker Login Command retrieved"
         
         if [ -z "$REPO_URL" ]; then
           echo "❌ Failed to get repository URL"
