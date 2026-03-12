@@ -48,3 +48,4 @@ terraform.rc
 *.iml
 .env
 .env.local
+ansible-practice/inventory.ini
