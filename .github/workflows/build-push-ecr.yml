@@ -152,11 +152,20 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
 
+    - name: Debug ECR Repository URL
+      env:
+        ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
+      run: |
+        echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL"
+        echo "Extracted Registry: $(echo $ECR_REPOSITORY_URL | cut -d/ -f1)"
+
     - name: Login to Amazon ECR
       env:
         ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
       run: |
-        aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $(echo $ECR_REPOSITORY_URL | cut -d/ -f1)
+        REGISTRY=$(echo $ECR_REPOSITORY_URL | cut -d/ -f1)
+        echo "Logging in to: $REGISTRY"
+        aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REGISTRY
 
     - name: Build Docker image
       id: build-image
