@@ -172,6 +172,17 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
 
+    - name: Validate Terraform Outputs
+      run: |
+        echo "🔍 Checking terraform outputs..."
+        echo "Repository URL: '${{ needs.terraform.outputs.repository_url }}'"
+        echo "Docker Login Command: '${{ needs.terraform.outputs.docker_login_command }}'"
+        
+        if [ -z "${{ needs.terraform.outputs.repository_url }}" ]; then
+          echo "❌ ERROR: repository_url is empty!"
+          exit 1
+        fi
+
     - name: Login to Amazon ECR
       env:
         DOCKER_LOGIN_CMD: ${{ needs.terraform.outputs.docker_login_command }}
@@ -185,8 +196,18 @@ jobs:
         ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
         IMAGE_TAG: latest
       run: |
+        echo "🐳 Building Docker image..."
+        echo "Repository URL: $ECR_REPOSITORY_URL"
+        echo "Image Tag: $IMAGE_TAG"
+        
+        if [ -z "$ECR_REPOSITORY_URL" ]; then
+          echo "❌ ERROR: ECR_REPOSITORY_URL is empty!"
+          exit 1
+        fi
+        
         docker build -t $ECR_REPOSITORY_URL:$IMAGE_TAG .
         echo "image=$ECR_REPOSITORY_URL:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "✅ Docker image built successfully"
 
     - name: Push Docker image to ECR
       env:
