@@ -12,18 +12,14 @@ permissions:
   pull-requests: write
 
 jobs:
-  terraform:
-    name: 'Terraform'
+  deploy:
+    name: 'Terraform and Docker CI/CD'
     runs-on: ubuntu-latest
     environment: aws
 
     defaults:
       run:
         shell: bash
-
-    outputs:
-      repository_url: ${{ steps.tf_output.outputs.repository_url }}
-      docker_login_command: ${{ steps.tf_output.outputs.docker_login_command }}
 
     steps:
     - name: Checkout
@@ -81,82 +77,68 @@ jobs:
       run: terraform apply -input=false tfplan
 
     - name: Export Terraform Outputs
-      id: tf_output
+      id: tf_outputs
       run: |
         REPO_URL=$(terraform output -raw repository_url 2>&1 | grep -v "^╷" | grep -v "^│" | grep -v "^└" | grep "\.amazonaws\.com" | tail -1)
         LOGIN_CMD=$(terraform output -raw docker_login_command 2>&1 | grep "aws ecr" | tail -1)
+        
+        if [ -z "$REPO_URL" ] || [ -z "$LOGIN_CMD" ]; then
+          echo "❌ ERROR: Failed to get terraform outputs"
+          echo "REPO_URL: [$REPO_URL]"
+          echo "LOGIN_CMD: [$LOGIN_CMD]"
+          exit 1
+        fi
         
         echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
         echo "docker_login_command=$LOGIN_CMD" >> $GITHUB_OUTPUT
         
         echo "✅ Terraform outputs exported"
 
-  build-and-push:
-    name: 'Build and Push Docker'
-    needs: terraform
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: aws
-
-    defaults:
-      run:
-        shell: bash
-
-    env:
-      ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
-      DOCKER_LOGIN_CMD: ${{ needs.terraform.outputs.docker_login_command }}
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1
-
     - name: Validate Outputs
+      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
       run: |
-        echo "🔍 Checking outputs from terraform job..."
+        echo "🔍 Checking terraform outputs..."
+        echo "Repository URL: ${{ steps.tf_outputs.outputs.repository_url }}"
+        echo "Docker Login: ${{ steps.tf_outputs.outputs.docker_login_command }}"
         
-        if [ -z "$ECR_REPOSITORY_URL" ]; then
-          echo "❌ ERROR: Failed to get repository URL from terraform job"
+        if [ -z "${{ steps.tf_outputs.outputs.repository_url }}" ]; then
+          echo "❌ ERROR: Failed to get repository URL"
           exit 1
         fi
         
-        if [ -z "$DOCKER_LOGIN_CMD" ]; then
-          echo "❌ ERROR: Failed to get docker login command from terraform job"
+        if [ -z "${{ steps.tf_outputs.outputs.docker_login_command }}" ]; then
+          echo "❌ ERROR: Failed to get docker login command"
           exit 1
         fi
         
         echo "✅ Outputs validated"
-        echo "Repository URL: $ECR_REPOSITORY_URL"
 
     - name: Login to Amazon ECR
+      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
       run: |
-        eval "$DOCKER_LOGIN_CMD"
+        eval "${{ steps.tf_outputs.outputs.docker_login_command }}"
         echo "✅ Successfully logged in to ECR"
 
     - name: Build Docker Image
+      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
       run: |
         IMAGE_TAG="latest"
         
         echo "🐳 Building Docker image..."
-        echo "Repository URL: $ECR_REPOSITORY_URL"
+        echo "Repository URL: ${{ steps.tf_outputs.outputs.repository_url }}"
         echo "Image Tag: $IMAGE_TAG"
         
-        docker build -t $ECR_REPOSITORY_URL:$IMAGE_TAG .
+        docker build -t "${{ steps.tf_outputs.outputs.repository_url }}:$IMAGE_TAG" .
 
     - name: Push Docker Image to ECR
+      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
       run: |
         IMAGE_TAG="latest"
         
         echo "📤 Pushing to ECR..."
-        docker push $ECR_REPOSITORY_URL:$IMAGE_TAG
-        echo "✅ Docker image pushed to ECR: $ECR_REPOSITORY_URL:$IMAGE_TAG"
+        docker push "${{ steps.tf_outputs.outputs.repository_url }}:$IMAGE_TAG"
+        echo "✅ Docker image pushed to ECR: ${{ steps.tf_outputs.outputs.repository_url }}:$IMAGE_TAG"
         
         # Write to job summary
         echo "## Docker Image Successfully Pushed" >> $GITHUB_STEP_SUMMARY
-        echo "Image URI: \`$ECR_REPOSITORY_URL:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+        echo "Image URI: \`${{ steps.tf_outputs.outputs.repository_url }}:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
