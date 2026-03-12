@@ -21,35 +21,12 @@ jobs:
       run:
         shell: bash
 
-    outputs:
-      repository_url: ${{ steps.terraform_output.outputs.repository_url }}
-      docker_login_command: ${{ steps.terraform_output.outputs.docker_login_command }}
-
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
-
-    - name: Debug AWS Credentials
-      run: |
-        echo "Checking AWS credentials..."
-        if [ -z "$AWS_ACCESS_KEY_ID" ]; then
-          echo "❌ AWS_ACCESS_KEY_ID not found"
-          exit 1
-        else
-          echo "✅ AWS_ACCESS_KEY_ID is set"
-        fi
-        if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-          echo "❌ AWS_SECRET_ACCESS_KEY not found"
-          exit 1
-        else
-          echo "✅ AWS_SECRET_ACCESS_KEY is set"
-        fi
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -61,33 +38,27 @@ jobs:
     - name: Terraform Init
       run: terraform init
 
-    - name: Terraform Format
-      run: terraform fmt -check
-
-    - name: Terraform Validate
-      run: terraform validate
+    - name: Terraform Format and Validate
+      run: |
+        terraform fmt -check
+        terraform validate
 
     - name: Create terraform.tfvars
       run: |
         cat > terraform.tfvars <<EOF
         repository_name = "felixdusengimana-demo-repo"
         EOF
-        cat terraform.tfvars
 
     - name: Terraform Plan
       run: terraform plan -input=false -out=tfplan
-
-    - name: Terraform Plan Output
-      if: github.event_name == 'pull_request'
-      run: terraform show tfplan > tfplan.txt
 
     - name: Comment PR with Terraform Plan
       if: github.event_name == 'pull_request'
       uses: actions/github-script@v6
       with:
         script: |
-          const fs = require('fs');
-          const plan = fs.readFileSync('tfplan.txt', 'utf8') || 'Plan file not available';
+          const { execSync } = require('child_process');
+          const plan = execSync('terraform show tfplan').toString();
           const truncatedPlan = plan.length > 3000 ? plan.substring(0, 3000) + '\n... (truncated)' : plan;
           github.rest.issues.createComment({
             issue_number: context.issue.number,
@@ -96,57 +67,9 @@ jobs:
             body: `## 📋 Terraform Plan\n\`\`\`\n${truncatedPlan}\n\`\`\``
           });
 
-    - name: Import Existing ECR Repository (if exists)
-      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
-      run: |
-        terraform import aws_ecr_repository.demo_repo felixdusengimana-demo-repo 2>/dev/null || echo "Repository not yet in state (first run)"
-      continue-on-error: true
-
-    - name: Terraform Plan (After Import)
-      if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
-      run: terraform plan -input=false -out=tfplan
-
     - name: Terraform Apply
       if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
       run: terraform apply -input=false tfplan
-
-    - name: Mask Terraform Secrets
-      if: (github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
-      run: |
-        echo "Checking for sensitive outputs..."
-        terraform output -json 2>/dev/null | jq -r 'to_entries[] | select(.value.sensitive == true) | .value.value' 2>/dev/null | while read -r line; do
-          if [ ! -z "$line" ]; then
-            echo "::add-mask::$line"
-          fi
-        done || echo "No sensitive outputs found"
-      continue-on-error: true
-
-    - name: Get Terraform Output
-      id: terraform_output
-      run: |
-        echo "🔍 Retrieving Terraform outputs..."
-        
-        # Get outputs and strip debug messages (everything after ::debug::)
-        REPO_URL=$(terraform output -raw repository_url 2>&1 | sed 's/::debug::.*//')
-        DOCKER_LOGIN=$(terraform output -raw docker_login_command 2>&1 | sed 's/::debug::.*//')
-        
-        # Trim any whitespace
-        REPO_URL=$(echo "$REPO_URL" | xargs)
-        DOCKER_LOGIN=$(echo "$DOCKER_LOGIN" | xargs)
-        
-        echo "✓ Repository URL: $REPO_URL"
-        echo "✓ Docker Login Command retrieved"
-        
-        if [ -z "$REPO_URL" ]; then
-          echo "❌ Failed to get repository URL"
-          exit 1
-        fi
-        
-        # Write to GITHUB_OUTPUT
-        echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
-        echo "docker_login_command=$DOCKER_LOGIN" >> $GITHUB_OUTPUT
-        
-        echo "✅ Outputs written to GITHUB_OUTPUT"
 
   build-and-push:
     name: 'Build and Push Docker'
@@ -170,53 +93,33 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
 
-    - name: Validate Terraform Outputs
-      run: |
-        echo "🔍 Checking terraform outputs..."
-        echo "Repository URL: '${{ needs.terraform.outputs.repository_url }}'"
-        echo "Docker Login Command: '${{ needs.terraform.outputs.docker_login_command }}'"
-        
-        if [ -z "${{ needs.terraform.outputs.repository_url }}" ]; then
-          echo "❌ ERROR: repository_url is empty!"
-          exit 1
-        fi
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
 
-    - name: Login to Amazon ECR
-      env:
-        DOCKER_LOGIN_CMD: ${{ needs.terraform.outputs.docker_login_command }}
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Login to Amazon ECR and Build
       run: |
+        # Get ECR credentials and login
+        DOCKER_LOGIN_CMD=$(terraform output -raw docker_login_command)
         eval "$DOCKER_LOGIN_CMD"
         echo "✅ Successfully logged in to ECR"
-
-    - name: Build Docker image
-      id: build-image
-      env:
-        ECR_REPOSITORY_URL: ${{ needs.terraform.outputs.repository_url }}
-        IMAGE_TAG: latest
-      run: |
+        
+        # Build and push docker image
+        ECR_REPOSITORY_URL=$(terraform output -raw repository_url)
+        IMAGE_TAG="latest"
+        
         echo "🐳 Building Docker image..."
         echo "Repository URL: $ECR_REPOSITORY_URL"
         echo "Image Tag: $IMAGE_TAG"
         
-        if [ -z "$ECR_REPOSITORY_URL" ]; then
-          echo "❌ ERROR: ECR_REPOSITORY_URL is empty!"
-          exit 1
-        fi
-        
         docker build -t $ECR_REPOSITORY_URL:$IMAGE_TAG .
-        echo "image=$ECR_REPOSITORY_URL:$IMAGE_TAG" >> $GITHUB_OUTPUT
-        echo "✅ Docker image built successfully"
-
-    - name: Push Docker image to ECR
-      env:
-        IMAGE: ${{ steps.build-image.outputs.image }}
-      run: |
-        docker push $IMAGE
-        echo "✅ Docker image pushed to ECR"
-
-    - name: Print Image URI
-      env:
-        IMAGE_URI: ${{ steps.build-image.outputs.image }}
-      run: |
+        
+        echo "📤 Pushing to ECR..."
+        docker push $ECR_REPOSITORY_URL:$IMAGE_TAG
+        echo "✅ Docker image pushed to ECR: $ECR_REPOSITORY_URL:$IMAGE_TAG"
+        
+        # Write to job summary
         echo "## Docker Image Successfully Pushed" >> $GITHUB_STEP_SUMMARY
-        echo "Image URI: \`$IMAGE_URI\`" >> $GITHUB_STEP_SUMMARY
+        echo "Image URI: \`$ECR_REPOSITORY_URL:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
