@@ -124,11 +124,27 @@ jobs:
     - name: Get Terraform Output
       id: terraform_output
       run: |
+        set -e
+        echo "🔍 Retrieving Terraform outputs..."
+        
+        # Get outputs with better error handling
         REPO_URL=$(terraform output -raw repository_url)
         DOCKER_LOGIN=$(terraform output -raw docker_login_command)
         
-        echo "repository_url=$REPO_URL" >> $GITHUB_OUTPUT
-        echo "docker_login_command=$DOCKER_LOGIN" >> $GITHUB_OUTPUT
+        # Trim whitespace
+        REPO_URL=$(echo "$REPO_URL" | xargs)
+        DOCKER_LOGIN=$(echo "$DOCKER_LOGIN" | xargs)
+        
+        if [ -z "$REPO_URL" ]; then
+          echo "❌ Failed to get repository URL"
+          exit 1
+        fi
+        
+        # Write to GITHUB_OUTPUT properly
+        {
+          echo "repository_url=$REPO_URL"
+          echo "docker_login_command=$DOCKER_LOGIN"
+        } >> $GITHUB_OUTPUT
         
         echo "✅ Outputs obtained:"
         echo "  Repository URL: $REPO_URL"
